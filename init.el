@@ -1,13 +1,14 @@
 ;;; Package --- Summary
 ;; Emacs setup for Linux, OSX, (and Windows OS testing pending)
-;;; Commentary:  The main package repository for Emacs
-;;; Code: Add melpa (https only) and gnu elpa (https only)
-(require 'package)
-(add-to-list 'package-archives
-	     '("melpa" . "https://melpa.org/packages/") t)
-(add-to-list 'package-archives
-	     '("gnu" . "https://elpa.gnu.org/packages/") t)
-(package-initialize)
+;;; Commentary:  The main package configuration for Emacs using
+;;; straight.el
+;;; Code:
+
+;;; Startup optimizations
+
+;; Adjust garbage collection thresholds
+(setq gc-cons-threshold (* 100 1024 1024))
+
 (setq package-check-signature nil)
 
 ;;; ---------------------------------------------------------------------------
@@ -24,6 +25,7 @@
         (list
          (format "gnutls-cli%s --x509cafile %s -p %%p %%h"
                  (if (eq window-system 'w32) ".exe" "") trustfile)))
+  ;; Do not allow insecure TLS connections.
   (setq gnutls-verify-error t)
   (setq gnutls-trustfiles (list trustfile)))
 (defun check-tls-config ()
@@ -44,18 +46,84 @@
                     (lambda (retrieved) t)))))
 ;; Added by Package.el. Placed before configurations of installed packages.
 (custom-set-variables
- ;; custom-set-variables was added by Custom.
+ ;; custom-set-variables was added by Custom.[<64;44;20M]
  ;; If there is more than one, they won't work right.
  '(package-selected-packages
    (quote
     (el-autoyas el-fly-indent-mode el-init-viewer el-init ac-c-headers gnu-elpa-keyring-update python-docstring sphinx-doc encourage-mode package-build package+ dired-sidebar all-the-icons-dired dash-functional cl-lib-highlight iedit smartparens-mode use-package cheat-sh pdf-tools yasnippet-snippets flymd flycheck-clang-analyzer flycheck-clang-tidy company-shell company-irony company-irony-c-headers company-jedi company-ctags auto-complete cl-format cl-generic cl-lib cl-libify auto-complete-auctex auto-complete-c-headers auto-complete-chunk auto-complete-clang elpy auctex company-auctex flycheck-indicator latex-extra latex-math-preview latex-pretty-symbols latex-preview-pane markdown-mode markdown-mode+ markdown-preview-mode org-ac org-babel-eval-in-repl company-c-headers counsel-tramp docker docker-tramp dockerfile-mode flycheck flycheck-pycheckers flycheck-relint flycheck-xcode flyspell-correct ivy-yasnippet org python python-info python-mode rainbow-delimiters smartparens json-mode jsonrpc which-key yasnippet yasnippet-classic-snippets company ivy))))
 (custom-set-faces
+
  ;; custom-set-faces was added by Custom.
  ;; If you edit it by hand, you could mess it up, so be careful.
  ;; Your init file should contain only one such instance.
  ;; If there is more than one, they won't work right.
  )
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Bootstrap the package manager, `straight.el`
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(defvar bootstrap-version)
+(let ((bootstrap-file
+       (expand-file-name "straight/repos/straight.el/bootstrap.el" user-emacs-directory))
+      (bootstrap-version 5))
+  (unless (file-exists-p bootstrap-file)
+    (with-current-buffer
+        (url-retrieve-synchronously
+         "https://raw.githubusercontent.com/raxod502/straight.el/develop/install.el"
+         'silent 'inhibit-cookies)
+      (goto-char (point-max))
+      (eval-print-last-sexp)))
+  (load bootstrap-file nil 'nomessage))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; Package `use-package`
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(straight-use-package 'use-package)
+
+;; Load features lazily unless otherwise determined by if `demand' is
+;; is present for eager loading
+;; https://github.com/jwiegley/use-package#notes-about-lazy-loading.
+(setq straight-use-package-by-default t)
+
+(defmacro use-feature (name &rest args)
+  "Like `use-package', but with `straight-use-package-by-default' disabled.
+NAME and ARGS are as in `use-package'."
+  (declare (indent defun))
+  `(use-package ,name
+     :straight nil
+     ,@args))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; Package `blackout'
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(use-package blackout
+  :straight (:host github :repo "raxod502/blackout")
+  :demand t)
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; Package `no-littering'
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(use-package no-littering
+  :demand t)
+
+;;; Prevent Emacs-provided Org-mode from being loaded
+
+;; Our real configuration for Org comes much later. Doing this now
+;; means that if any packages that are installed in the meantime
+;; depend on Org, they will not accidentally cause the Emacs-provided
+;; (outdated and duplicated) version of Org to be loaded before the
+;; real one is registered.
+;;
+;; Use my mirror of Org because the upstream has *shockingly*
+;; atrocious uptime (namely, the entire service will just go down for
+;; more than a day at a time on a regular basis). Unacceptable because
+;; it keeps breaking Radian CI.
+(straight-use-package
+ '(org :host github :repo "emacs-straight/org-mode" :local-repo "org"))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;;  Add functions to determine system
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 (defun system-is-mac ()
   (interactive)
   (string-equal system-type "darwin"))
@@ -64,8 +132,25 @@
   (interactive)
   (string-equal system-type "gnu/linux"))
 
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;;  Load theme
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 (load-theme 'tango-dark)
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; Mouse integration
+;; Mouse integration works out of the box in windowed mode but not
+;; terminal mode. The following code to fix it was based on
+;; <https://stackoverflow.com/a/8859057/3538165>.
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(unless (display-graphic-p)
+
+  ;; Enable basic mouse support (click and drag).
+  (xterm-mouse-mode 1))
+
+;; Enable scrolling with the mouse wheel.
+(global-set-key [mouse-4] (lambda () (interactive) (scroll-down 1)))
+(global-set-key [mouse-5] (lambda () (interactive) (scroll-up 1)))
 
 ;;;  whitespace indicator
 (require 'whitespace)
@@ -102,21 +187,12 @@
 	     :ensure t
 	     :bind (("C-c ?" . cheat-sh)))
 
-;;; which-key
-(require 'which-key)
-(which-key-mode)
-
-;;; dired - directory edit mode
-(use-package dired
+;;; Package `which-key`
+(use-package which-key
+  :demand t
   :config
-  (setq dired-dwin-target t)
-  :hook (dired-mode . dired-hide-details-mode))
-(use-package all-the-icons-dired
-  :ensure t
-  :hook (dired-mode . all-the-icons-dired-mode))
-(use-package dired-sidebar
-  :ensure t
-  :bind (("C-c s" . dired-sidebar-toggle-sidebar)))
+  (which-key-mode +1))
+
 
 ;;; Set the backup folder with rudimentary version control instead of ~ files
 (setq backup-directory-alist '(("." . "~/.emacs.d/backup"))
@@ -127,23 +203,28 @@
       kept-old-versions 5)
 
 ;;; smartparens auto-close parenthesis etc
-(add-to-list 'load-path "/Users/amilcararmmand/smartparens")
-;(require 'smartparens-mode)
-(smartparens-global-mode 1)
+;; (add-to-list 'load-path "/Users/amilcararmmand/smartparens")
 (use-package smartparens
+  :demand t
+  :config
+
+  ;; Load the default pair definitions for Smartparens.
+  (require 'smartparens-config)
+
+  ;; Enable Smartparens in all buffers.
+  (smartparens-global-mode +1)
 	:ensure t
 	:config
 	(sp-use-paredit-bindings)
 	(add-hook 'prog-mode-hook #'smartparens-global-mode)
 	(sp-pair "{" nil :post-handlers '(("||\n[i]" "RET"))))
 (show-paren-mode 1)
-(setq show-paren-style 'mixed)
 
-;;; encourage mode
+;;; Package `encourage mode' because everyone needs encouragement
 (use-package encourage-mode
   :ensure t
   :config
-  ;; Activate encourage-mode
+;; Activate encourage-mode
   (encourage-mode t))
 (setq encourage-encouragements
       (nconc encourage-encouragements
@@ -153,6 +234,7 @@
 	       "Nice!"
 	       "Outstanding!"
 	       "Ossum!"
+	       "Pointers!"
 	       "Quit it!"
 	       "Scwhanky!"
 	       "Spanakopita!"
@@ -165,47 +247,75 @@
 	       "Whoa!")))
 
 ;;; May consider company competion method as and alt to autocomplete.
-;;; Autocomplete mode
-(require 'auto-complete)
-(require 'auto-complete-config)
-(ac-config-default)
+;; Selectrum, Ido, Hekm, Ivy, Icompletem...
+;; Package `selectrum' is an incremental completion and narrowing
+;; framework, which provides a user interface for choosing from a list
+;; of options by typing a query to narrow the list, and then selecting
+;; one of the remaining candidates.
+(use-package selectrum
+  :straight (:host github :repo "raxod502/selectrum")
+  :defer t
+  :init
+
+  ;; This doesn't actually load Selectrum.
+  (selectrum-mode +1))
+
+;; Package `prescient' is a library for intelligent sorting and
+;; filtering in various contexts.
+(use-package prescient
+  :config
+
+  ;; Remember usage statistics across Emacs sessions.
+  (prescient-persist-mode +1)
+
+  ;; Increase default settings to 1000 entries.
+  (setq prescient-history-length 1000))
+
+;; Package `selectrum-prescient' provides intelligent sorting and
+;; filtering for candidates in Selectrum menus.
+(use-package selectrum-prescient
+  :straight (:host github :repo "raxod502/prescient.el"
+                   :files ("selectrum-prescient.el"))
+  :demand t
+  :after selectrum
+  :config
+
+  (selectrum-prescient-mode +1))
+
+;; Package `ctrlf' provides a replacement for `isearch' that is
+;; similar to the default macOS text search interfaces in web
+;; browsers and other programs.
+(use-package ctrlf
+  :straight (:host github :repo "raxod502/ctrlf")
+  :init
+
+  (ctrlf-mode +1))
 
 ;;; yasnippets
-(require 'yasnippet)
-(yas-global-mode 1)
-; let's define a function which initializes auto-complete-c-headers and gets called for c/c++ hooks
-(defun my:ac-c-header-init ()
-  (require 'auto-complete-c-headers)
-  (add-to-list 'ac-sources 'ac-source-c-headers)
-  (add-to-list 'achead:include-directories '"/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/clang/11.0.3/include")
-  )
-; use 'gcc -xc++ -E -v -' to find where c header files are stored locally, results below
-; /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/clang/11.0.3/include
-; /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk/usr/include
-; /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/include
-; now let's call the my:ac-c-header-init function from c/c++ hooks
-(add-hook 'c++-mode-hook 'my:ac-c-header-init)
-(add-hook 'c-mode-hook 'my:ac-c-header-init)
+
 
 ;;; iedit
 (use-package iedit
   :ensure t
   :bind (("C-c i" . iedit-mode)))
 
-;;; Betty-style and Flycheck coding linter
-(load "~/.emacs.d/private/Betty/betty-style")
-(add-to-list 'flycheck-checkers 'betty-style)
-(use-package flycheck
-  :ensure t
-  :init (global-flycheck-mode))
-(setq flycheck-gcc-pedantic t)
-(setq flycheck-gcc-warnings '("all" "extra" "error"))
+;;; Flycheck package
 
-;;; Major modes ???
+;;; Betty-style and Flycheck coding linter
+;; (load "~/.emacs.d/private/Betty/betty-style")
+;; (add-to-list 'flycheck-checkers 'betty-style)
+;; (straight-use-package flycheck
+;;  :ensure t
+;;  :init (global-flycheck-mode))
+;;(setq flycheck-gcc-pedantic t)
+;;(setq Eflycheck-gcc-warnings '("all" "extra" "error"))
+
+;;; Major mode for C
 (setq c-default-style "bsd"
       c-basic-offset 8
       tab-width 8
       indent-tabs-mode t)
+
 ;;;  Python
 (use-package elpy
   :ensure t
@@ -215,6 +325,7 @@
   (setq python-shell-interpreter "ipython"
         python-shell-interpreter-args "-i --simple-prompt")
   (add-hook 'elpy-mode-hook (lambda () (highlight-indentation-mode -1))))
+
 ;;;  Package for Python docstrings, features automatic docstring creation and
 ;;; highlighting in them.
 (use-package sphinx-doc
