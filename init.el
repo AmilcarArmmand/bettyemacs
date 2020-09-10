@@ -6,6 +6,10 @@
 
 ;;; Startup optimizations
 
+;;; Load built-in utility libraries
+(require 'cl-lib)
+
+
 ;; Adjust garbage collection thresholds
 (setq gc-cons-threshold (* 100 1024 1024))
 
@@ -336,6 +340,5 @@ NAME and ARGS are as in `use-package'."
   :ensure t
   :config (setq python-docstring-sentence-end-double-space nil)
   :hook (python-mode . python-docstring-mode))
-
 
 ;;; .emacs.el ends here
