@@ -1,49 +1,34 @@
-;; -*- lexical-binding: t -*-
-;; Commentary:
-;; This file bootstraps the configuration, which is divided into a number of
-;; files.  Emacs setup for Linux, OSX, (and Windows NT testing pending)
-
+;;; init.el --- -*- lexical-binding: t -*-
+;;; Commentary:
 ;;; Code:
 
-(defvar current-user
-  (getenv
-   (if (equal system-type 'windows-nt) "USERNAME" "USER")))
-
-(message "Darius is powering up... Be patient, %s." current-user)
-
-;; Produce backtrace help messages when errors occur on startup to help fix.
-(setq debug-on-error t) ;; turn on debug-on-error
-
-(let ((minver "24.5"))
-  (when (version< emacs-version minver)
-    (error "Your Emacs is too old -- this config requires v%s or higher" minver)))
-(when (version< emacs-version "25.1")
-  (message "Your Emacs is old, and some functionality in this config will be disabled. Please upgrade if possible."))
-
-(add-to-list 'load-path (expand-file-name "lisp" user-emacs-directory))
-;;(require 'init-benchmarking) ;; Measure startup time
-
-(defconst *spell-check-support-enabled* t) ;; Enable with t, disable with nil
+(defconst *spell-check-support-enabled* t) ;; Enable with t if you prefer
 (defconst *is-a-mac* (eq system-type 'darwin))
 (defconst *is-a-linux* (eq system-type 'gnu/linux))
 (defconst *is-a-windows* (eq system-type 'windows-nt))
-(setq debug-on-error nil) ;; turn off debug-on-error
 
-;;-----------------------------------------------------------------------------
-;; Startup optimizations
-;;-----------------------------------------------------------------------------
-(require 'cl-lib)
-(require 'map)
-(require 'subr-x)
+;; Add hook to measure emacs startup times
+(add-hook 'emacs-startup-hook
+          (lambda ()
+            (message "*** Emacs loaded in %s with %d garbage collections."
+                     (format "%.2f seconds"
+                             (float-time
+                              (time-subtract after-init-time before-init-time)))
+                     gcs-done)))
 
-;; Adjust garbage collection thresholds. Values are in bytes.
+;;;; Make startup faster by reducing the frequency of garbage collection.
+;; This helps performance both during init and after init.
+;; Value is in bytes so this is 100MB, as suggested in
+;; <https://github.com/emacs-lsp/lsp-mode#performance>.
 (setq gc-cons-threshold (* 100 1024 1024))
 
-;;; Networking and security
-;; Use `with-eval-after-load' instead of `straight-use-feature' because we have
-;; yet to set up package management.
+;;;; Networking
 
-;; Support for SSL/TLS connections, using the GnuTLS library.
+;; Use `with-eval-after-load' instead of `use-feature' because we have
+;; not yet set up package management.
+
+;; Feature `gnutls' provides support for SSL/TLS connections, using
+;; the GnuTLS library.
 (with-eval-after-load 'gnutls
 
   ;; `use-package' does this for us normally.
@@ -57,12 +42,7 @@
   ;; value.
   (setq gnutls-min-prime-bits 3072))
 
-;;; ---------------------------------------------------------------------------
-(setq tls-checktrust t)
-
-;;=============================================================================
-;; Bootstrap the package manager, `straight.el`
-;;=============================================================================
+;;;; Bootstrap the Straight.el package manager.
 (defvar bootstrap-version)
 (let ((bootstrap-file
        (expand-file-name "straight/repos/straight.el/bootstrap.el" user-emacs-directory))
@@ -76,14 +56,8 @@
       (eval-print-last-sexp)))
   (load bootstrap-file nil 'nomessage))
 
-;;=============================================================================
-;;; Package `use-package`
-;;=============================================================================
+;;;; Package `use-package'
 (straight-use-package 'use-package)
-
-;; Load features lazily unless otherwise determined by if `demand' is
-;; is present for eager loading
-;; https://github.com/jwiegley/use-package#notes-about-lazy-loading.
 (setq straight-use-package-by-default t)
 
 ;; Package `blackout' provides a convenient function for customizing
@@ -95,38 +69,113 @@
   :straight (:host github :repo "raxod502/blackout")
   :demand t)
 
-;;=============================================================================
-;; mac keybindings
-;;=============================================================================
-(setq mac-command-modifier 'meta) ; set cmd key to Meta
-(setq mac-option-modifier 'super) ; set option key to Super
-(setq mac-control-modifier 'control) ; set control key to Control
-(setq ns-function-modifier 'hyper) ; set function key to Hyper
-
-;;; Disable the bell
-(setq ring-bell-function 'ignore)
+;; Package `no-littering' changes the default paths for lots of
+;; different packages, with the net result that the ~/.emacs.d folder
+;; is much more clean and organized.
 (use-package no-littering
   :demand t)
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;;; Load configurations for features and modes
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-(straight-use-package 'wgrep)
-(straight-use-package 'scratch)
+(straight-use-package
+ '(org :host github :repo "emacs-straight/org-mode" :local-repo "org"))
+
+(use-package command-log-mode)
+
+;; Package `which-key' displays the key bindings and associated
+;; commands following the currently-entered key prefix in a popup.
+(use-package which-key
+  :demand t
+  :config
+  (setq which-key-idle-delay 0.3)
+  (which-key-mode +1)
+  :blackout t)
+
+(use-package all-the-icons)
+
+(use-package doom-modeline
+  :init (doom-modeline-mode 1)
+  :custom ((doom-modeline-height 15)))
+
+
+;; Mouse integration works out of the box in windowed mode but not
+;; terminal mode. The following code to fix it was based on
+;; <https://stackoverflow.com/a/8859057/3538165>.
+(unless (display-graphic-p)
+
+  ;; Enable basic mouse support (click and drag).
+  (xterm-mouse-mode t)
+
+  ;; Note that the reason for the next two functions is that
+  ;; `scroll-down' and `scroll-up' scroll by a "near full screen"
+  ;; by default, whereas we want a single line.
+
+  (eval-and-compile
+    (defun radian-scroll-down ()
+      "Scroll down one line."
+      (interactive)
+      (scroll-down 1))
+
+    (defun radian-scroll-up ()
+      "Scroll up one line."
+      (interactive)
+      (scroll-up 1)))
+
+  ;; Enable scrolling with the mouse wheel.
+  (bind-key "<mouse-4>" #'radian-scroll-down)
+  (bind-key "<mouse-5>" #'radian-scroll-up))
+
 
 ;;;  line and column numbering
 (setq column-number-mode t)
-(setq global-linum-mode t)
-(global-linum-mode t)
-(setq linum-format "%d ")
+(global-linum-mode t)              ;; enable line numbers globally
+(setq linum-format "%4d \u2502 ")  ;; format line number spacing
+(require 'whitespace)
+(setq whitespace-style '(face empty lines-tail trailing))
+(global-whitespace-mode t)
 
-;; `Selectrum' is an incremental completion and narrowing framework.
+;;;; Development
+
+;;; IDE features with lsp-mode
+(defun efs/lsp-mode-setup ()
+  (setq lsp-headerline-breadcrumb-segments '(path-up-to-project file symbols))
+  (lsp-headerline-breadcrumb-mode))
+
+(use-package lsp-mode
+  :commands (lsp lsp-deferred)
+  :hook (lsp-mode . efs/lsp-mode-setup)
+  :init
+  (setq lsp-keymap-prefix "C-c l")  ;; Or 'C-l', 's-l'
+  :config
+  (lsp-enable-which-key-integration t))
+
+
+;;; `lsp-ui' is a set of UI enhancements built on top of `lsp-mode'
+(use-package lsp-ui
+  :hook (lsp-mode . lsp-ui-mode)
+  :custom
+  (lsp-ui-doc-position 'bottom))
+
+
+;; lsp-ui
+;; lsp-mode
+;; flycheck
+;; yasnippet
+;; magit
+;; no-littering
+;; smartparens
+;; company
+
+;; Package `selectrum' is an incremental completion and narrowing
+;; framework. Like Ivy and Helm, which it improves on, Selectrum
+;; provides a user interface for choosing from a list of options by
+;; typing a query to narrow the list, and then selecting one of the
+;; remaining candidates. This offers a significant improvement over
+;; the default Emacs interface for candidate selection.
 (use-package selectrum
   :straight (:host github :repo "raxod502/selectrum")
   :defer t
   :init
 
-;; This doesn't actually load Selectrum.
+  ;; This doesn't actually load Selectrum.
   (selectrum-mode +1))
 
 ;; Package `prescient' is a library for intelligent sorting and
@@ -134,10 +183,11 @@
 (use-package prescient
   :config
 
-;; Remember usage statistics across Emacs sessions.
+  ;; Remember usage statistics across Emacs sessions.
   (prescient-persist-mode +1)
 
-;; Increases the default setting
+  ;; The default settings seem a little forgetful to me. Let's try
+  ;; this out.
   (setq prescient-history-length 1000))
 
 ;; Package `selectrum-prescient' provides intelligent sorting and
@@ -150,69 +200,52 @@
   :config
 
   (selectrum-prescient-mode +1))
- 
-(use-package ctrlf
-  :straight (:host github :repo "raxod502/ctrlf")
-  :init
 
-  (ctrlf-mode +1))
+(straight-use-package 'ivy-prescient)
+(straight-use-package 'company-prescient)
 
-;;;; Mouse integration
-(global-set-key [mouse-4] (lambda () (interactive) (scroll-down 1)))
-(global-set-key [mouse-5] (lambda () (interactive) (scroll-up 1)))
-(xterm-mouse-mode t)
+(setq c-default-style "bsd"
+      c-basic-offset 8
+      tab-width 8
+      indent-tabs-mode t)
+(require 'whitespace)
+(setq whitespace-style '(face empty lines-tail trailing))
+(global-whitespace-mode t)
 
-;;=============================================================================
-;;; encourage mode
-;;=============================================================================
-(use-package encourage-mode
-  :ensure t
-  :config
-  ;; Activate encourage-mode
-  (encourage-mode t))
-(setq encourage-encouragements
-      (nconc encourage-encouragements
-	     '("Excellent!"
-	       "Hot sandwich!"
-	       "Be the change!"
-	       "Nice!"
-	       "Outstanding!"
-	       "Ossum!"
-	       "Quit it!"
-	       "Scwhanky!"
-	       "Spanakopita!"
-	       "SPHINX!"
-	       "Supergood!"
-	       "Sweet!"
-	       "I am TYT!"
-	       "That is so Batman!"
-	       "Well done, you!"
-	       "Whoa!")))
-
-;;=============================================================================
-;; Load theme last
-;;=============================================================================
+;;;; Package `zerodark-theme'
+(straight-register-package
+ '(zerodark-theme :host github :repo "NicolasPetton/zerodark-theme"))
 
 (use-package zerodark-theme
-  :straight (:host github :repo "NicolasPetton/zerodark-theme")
-(require 'zerodark-theme)
+    :no-require t
+    :functions (true-color-p)
+    :demand t
+    :config
+    ;; Needed because `:no-require' for some reason disables the
+    ;; load-time `require' invocation, as well as the compile-time
+    ;; one.
+    (require 'zerodark-theme)
+    (let ((background-purple (if (true-color-p) "#48384c" "#5f5f5f"))
+          (class '((class color) (min-colors 89)))
+          (green (if (true-color-p) "#98be65" "#87af5f"))
+          (orange (if (true-color-p) "#da8548" "#d7875f"))
+          (purple (if (true-color-p) "#c678dd" "#d787d7")))
+      (custom-theme-set-faces
+       'zerodark
+       `(selectrum-current-candidate
+         ((,class (:background
+                   ,background-purple
+                   :weight bold
+                   :foreground ,purple))))
+       `(selectrum-primary-highlight ((,class (:foreground ,orange))))
+       `(selectrum-secondary-highlight ((,class (:foreground ,green))))))
+    (enable-theme 'zerodark))
 
-(let ((class '((class color) (min-colors 89))))
-  (custom-theme-set-faces
-   'zerodark
-   `(selectrum-current-candidate
-     ((,class (:background "#48384c"
-                           :weight bold
-                           :foreground "#c678dd"))))
-   `(selectrum-primary-highlight ((,class (:foreground "#da8548"))))
-   `(selectrum-secondary-highlight ((,class (:foreground "#98be65"))))))
+;;;;  package.el
+;;; so package-list-packages includes them for perusal
+(require 'package)
+(add-to-list 'package-archives
+	     '("melpa" . "https://melpa.org/packages/") t)
 
-(enable-theme 'zerodark)
-
-
-(provide 'init)\n
-
-
-;; coding: utf-8
-;; no-byte-compile: t
+(provide 'init)
 ;;; init.el ends here
